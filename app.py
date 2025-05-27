@@ -2,11 +2,11 @@ import os
 import chainlit as cl
 from dotenv import load_dotenv
 from operator import itemgetter
-from langchain_huggingface import HuggingFaceEndpoint
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from langchain_huggingface import HuggingFaceEndpoint
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import TextLoader
+from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.runnable import RunnablePassthrough
@@ -58,10 +58,34 @@ hf_embeddings = HuggingFaceEndpointEmbeddings(
 
 
 async def add_documents_async(vectorstore, documents):
+    """Add documents asynchronously to an existing vectorstore.
+
+    Args:
+        vectorstore: The FAISS vectorstore to add documents to.
+        documents: List of documents to be added to the vectorstore.
+
+    Returns:
+        None
+    """
     await vectorstore.aadd_documents(documents)
 
 
 async def process_batch(vectorstore, batch, is_first_batch, pbar):
+    """Process a batch of documents for vectorstore creation or addition.
+
+    This function either creates a new vectorstore from the first batch of documents
+    or adds documents to an existing vectorstore for subsequent batches.
+
+    Args:
+        vectorstore: Existing FAISS vectorstore (None for first batch).
+        batch: List of documents to process in this batch.
+        is_first_batch (bool): True if this is the first batch (creates new vectorstore),
+                              False if adding to existing vectorstore.
+        pbar: Progress bar object to update with batch processing progress.
+
+    Returns:
+        FAISS vectorstore: Either newly created or existing vectorstore with added documents.
+    """
     if is_first_batch:
         result = await FAISS.afrom_documents(batch, hf_embeddings)
     else:
@@ -72,6 +96,18 @@ async def process_batch(vectorstore, batch, is_first_batch, pbar):
 
 
 async def main():
+    """Create and populate a FAISS vectorstore from document batches.
+
+    This function processes documents in batches to create a vectorstore for retrieval.
+    The first batch initializes the vectorstore, while subsequent batches are processed
+    in parallel to add documents efficiently.
+
+    Returns:
+        Retriever: A FAISS retriever object for document search and retrieval.
+
+    Raises:
+        Various exceptions from FAISS operations or document processing.
+    """
     print("Indexing Files")
 
     vectorstore = None
@@ -112,6 +148,14 @@ async def main():
 
 
 async def run():
+    """Execute the main indexing process and return the retriever.
+
+    This is a wrapper function that calls the main() function to create
+    the vectorstore and returns the resulting retriever.
+
+    Returns:
+        Retriever: A FAISS retriever object for document search and retrieval.
+    """
     retriever = await main()
     return retriever
 
@@ -160,10 +204,17 @@ hf_llm = HuggingFaceEndpoint(
 
 @cl.author_rename
 def rename(original_author: str):
-    """
-    This function can be used to rename the 'author' of a message.
+    """Rename the author of messages in the chat interface.
 
-    In this case, we're overriding the 'Assistant' author to be 'Paul Graham Essay Bot'.
+    This function customizes the display name of message authors in the Chainlit
+    chat interface. It maps the default 'Assistant' author to a more specific
+    'Paul Graham Essay Bot' name.
+
+    Args:
+        original_author (str): The original author name to be renamed.
+
+    Returns:
+        str: The new author name, or the original name if no mapping exists.
     """
     rename_dict = {"Assistant": "Paul Graham Essay Bot"}
     return rename_dict.get(original_author, original_author)
@@ -171,12 +222,20 @@ def rename(original_author: str):
 
 @cl.on_chat_start
 async def start_chat():
-    """
-    This function will be called at the start of every user session.
+    """Initialize a new chat session with the RAG chain.
 
-    We will build our LCEL RAG chain here, and store it in the user session.
+    This function is called at the start of every user session. It builds
+    an LCEL (LangChain Expression Language) RAG chain that combines document
+    retrieval with language model generation, and stores it in the user session
+    for subsequent message handling.
 
-    The user session is a dictionary that is unique to each user session, and is stored in the memory of the server.
+    The RAG chain includes:
+    - Document retrieval using the FAISS vectorstore
+    - Prompt formatting with retrieved context
+    - Text generation using the HuggingFace LLM
+
+    Returns:
+        None: The chain is stored in the user session rather than returned.
     """
 
     ### BUILD LCEL RAG CHAIN THAT ONLY RETURNS TEXT
@@ -191,12 +250,23 @@ async def start_chat():
 
 @cl.on_message
 async def main(message: cl.Message):
-    """
-    This function will be called every time a message is recieved from a session.
+    """Handle incoming chat messages and generate RAG-based responses.
 
-    We will use the LCEL RAG chain to generate a response to the user query.
+    This function is called every time a message is received from a user session.
+    It uses the LCEL RAG chain stored in the user session to generate a response
+    by retrieving relevant documents and generating contextual answers.
 
-    The LCEL RAG chain is stored in the user session, and is unique to each user session - this is why we can access it here.
+    The response is streamed back to the user in real-time as tokens are generated
+    by the language model.
+
+    Args:
+        message (cl.Message): The incoming message object containing user input.
+
+    Returns:
+        None: The response is sent directly to the chat interface.
+
+    Raises:
+        Various exceptions from the RAG chain execution or streaming process.
     """
     lcel_rag_chain = cl.user_session.get("lcel_rag_chain")
 
